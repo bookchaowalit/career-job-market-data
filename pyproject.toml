@@ -3,7 +3,9 @@ name = "book-job-data"
 version = "0.1.0"
 description = "Lake-first job discovery data contract for Solo Empire Track B."
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+  "sentry-sdk>=2.72,<3",
+]
 
 [project.optional-dependencies]
 lake = [

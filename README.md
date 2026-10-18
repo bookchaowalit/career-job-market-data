@@ -158,7 +158,9 @@ still storage parity only and does not replace the API read contract.
 
 **Live (2026-10-14):** Railway project `book-job-data`, service `book-job-data-api`
 (Singapore, serverless; `railway.toml`), deployed with `railway up --ci --service book-job-data-api`.
-`/healthz` is public; every `/v1/*` route needs `BOOK_JOB_DATA_API_TOKEN`. The image ships
+`/healthz` is public; every `/v1/*` route needs `BOOK_JOB_DATA_API_TOKEN`. `SENTRY_DSN` (Railway
+variable; error reporting, unset = off, see `src/book_job_data/_sentry.py`) and `SENTRY_ENVIRONMENT`
+turn on Sentry. The image ships
 the AWS CLI because the pinned `data_lake` runtime lists and reads `s3://` objects through it.
 The first read after the service wakes loads Bronze from R2 and can take a minute or more;
 later reads come from the 300-second cache. The Render lane below is the earlier,
