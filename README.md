@@ -157,7 +157,11 @@ still storage parity only and does not replace the API read contract.
 ## Hosted deployment
 
 **Live (2026-10-14):** Railway project `book-job-data`, service `book-job-data-api`
-(Singapore, serverless; `railway.toml`), deployed with `railway up --ci --service book-job-data-api`.
+(Singapore, serverless; `railway.toml`). Deploys (CD, since 2026-10-18): the service is connected to
+this repository's `main` with Railway's Wait for CI (`checkSuites`). A merge to `main` deploys only
+after the CI and security checks pass; a failing check leaves production on the previous deployment.
+Roll back by redeploying an earlier deployment in Railway. `railway up` is no longer used;
+the service settings stay in `railway.toml`.
 `/healthz` is public; every `/v1/*` route needs `BOOK_JOB_DATA_API_TOKEN`. `SENTRY_DSN` (Railway
 variable; error reporting, unset = off, see `src/book_job_data/_sentry.py`) and `SENTRY_ENVIRONMENT`
 turn on Sentry. The image ships
