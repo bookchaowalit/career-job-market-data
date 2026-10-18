@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import config
+from . import _sentry, config
 from .lake import load_lineage
 from .privacy import sanitize_record
 from .store import envelope, load_dataset, paginate
@@ -299,9 +299,16 @@ class Handler(BaseHTTPRequestHandler):
         )
 
 
+class Server(ThreadingHTTPServer):
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        # http.server swallows handler exceptions (500 + traceback on stderr); report them first.
+        _sentry.capture(sys.exc_info()[1])
+        super().handle_error(request, client_address)
+
+
 def main() -> None:
     require_token_for_bind(config.API_HOST, config.API_READ_TOKEN)
-    server = ThreadingHTTPServer((config.API_HOST, config.API_PORT), Handler)
+    server = Server((config.API_HOST, config.API_PORT), Handler)
     print(f"book-job-data API listening on http://{config.API_HOST}:{config.API_PORT}")
     try:
         server.serve_forever()
