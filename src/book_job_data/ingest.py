@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import config, lake
+from . import _sentry, config, lake
 from .privacy import sanitize_record
 from .store import canonical_url, stable_job_id, project_csv
 
@@ -189,6 +189,7 @@ def main(argv: list[str] | None = None) -> int:
                 ingest_capture(path, data_lake_uri=data_lake_uri, provider=args.provider, capture=captures[path])
             )
     except Exception as exc:  # fail closed: no projection is touched
+        _sentry.capture(exc)
         print(f"Lake ingest failed; CSV projection was not written: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
     if args.project_csv:
