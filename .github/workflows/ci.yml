@@ -16,11 +16,13 @@ concurrency:
 
 jobs:
   data:
-    uses: bookchaowalit/platform-ci-workflows/.github/workflows/ci-python.yml@c37ef9d113eefb3ed45429717cb7ca201192c3fc # v1.0.1
+    uses: bookchaowalit/platform-ci-workflows/.github/workflows/ci-python.yml@87dc5e1c7e0416886a6371d5a101bb2ccba38edd # v1.1.1
     with:
       python-version: "3.12" # matches the Dockerfile (python:3.12-slim)
-      # The lake extra (duckdb, pyarrow, data-lake-core) is what the contract tests exercise.
-      install-command: uv pip install -e ".[lake]" pytest
+      # Installs from uv.lock (uv sync --frozen --all-extras): the lake extra (duckdb, pyarrow,
+      # data-lake-core) is what the contract tests exercise; pytest comes from the dev group.
+      # [tool.mypy] covers src/ only; tests are not typed yet.
+      typecheck-command: uv pip install "mypy==2.4.0" && mypy
       # Same gates as the previous CI: offline contract/policy tests (no network, no paid
       # providers), compile, and the CLI entry points.
       test-command: >-
@@ -30,4 +32,4 @@ jobs:
         && book-job-data --help
 
   security:
-    uses: bookchaowalit/platform-ci-workflows/.github/workflows/security.yml@c37ef9d113eefb3ed45429717cb7ca201192c3fc # v1.0.1
+    uses: bookchaowalit/platform-ci-workflows/.github/workflows/security.yml@87dc5e1c7e0416886a6371d5a101bb2ccba38edd # v1.1.1

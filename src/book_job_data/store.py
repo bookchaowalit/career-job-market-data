@@ -38,7 +38,7 @@ def _ps():
     return _ps_module
 
 
-def canonical_url(url: str) -> str:
+def canonical_url(url: str | None) -> str:
     raw = str(url or "").strip()
     if not raw:
         return ""

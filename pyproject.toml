@@ -14,6 +14,9 @@ lake = [
   "solo-empire-data-lake[lake] @ https://github.com/bookchaowalit/data-lake-core/archive/b8f8698995a4d4283247bd432d521b337ef8ec94.tar.gz",
 ]
 
+[dependency-groups]
+dev = ["pytest>=8"]
+
 [project.scripts]
 book-job-data = "book_job_data.ingest:main"
 book-job-data-api = "book_job_data.api:main"
@@ -29,3 +32,12 @@ line-length = 120
 # Pin the classic default rule set explicitly so newer ruff releases (0.16+
 # widened the defaults) do not change what CI enforces.
 select = ["E4", "E7", "E9", "F"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src"]
+ignore_missing_imports = true
+
+[tool.uv]
+# Install this project itself (it has CLI entry points) even though pyproject.toml declares no build-system.
+package = true

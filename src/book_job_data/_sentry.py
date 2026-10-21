@@ -77,7 +77,8 @@ def init_sentry() -> None:
         send_default_pii=False,
         include_local_variables=False,  # frame locals hold JWTs and database URLs
         max_request_body_size="never",
-        before_send=_scrub_event,
+        # sentry-sdk types events as a TypedDict; the scrubber treats them as plain dicts on purpose.
+        before_send=_scrub_event,  # type: ignore[arg-type]
         # Log records are neither events nor breadcrumbs: free-form log text can carry secrets
         # that no pattern can recognise. Unhandled exceptions (FastAPI, excepthook) and capture()
         # still report.
@@ -94,9 +95,9 @@ def init_sentry() -> None:
     )
 
 
-def capture(exc: BaseException) -> None:
+def capture(exc: BaseException | None) -> None:
     """Report an exception a cron/CLI handler catches and turns into an exit code."""
-    if not os.environ.get("SENTRY_DSN", "").strip():
+    if exc is None or not os.environ.get("SENTRY_DSN", "").strip():
         return
     import sentry_sdk
 

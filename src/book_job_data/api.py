@@ -285,15 +285,13 @@ class Handler(BaseHTTPRequestHandler):
             )
         if path.startswith("/v1/records/"):
             record_id = unquote(path[len("/v1/records/") :])
-            item = next(
-                (row for row in CACHE.get(config.DEFAULT_DATASET)["items"] if str(row.get("record_id")) == record_id),
-                None,
-            )
-            if item is None:
+            rows: list[dict[str, Any]] = CACHE.get(config.DEFAULT_DATASET)["items"]
+            record = next((row for row in rows if str(row.get("record_id")) == record_id), None)
+            if record is None:
                 return _json_response(
                     self, 404, envelope(items=[], data_status="not_found", extra={"error": "record not found"})
                 )
-            return _json_response(self, 200, envelope(items=[item], data_status="ok"))
+            return _json_response(self, 200, envelope(items=[record], data_status="ok"))
         return _json_response(
             self, 404, envelope(items=[], data_status="not_found", extra={"error": "unknown endpoint"})
         )
