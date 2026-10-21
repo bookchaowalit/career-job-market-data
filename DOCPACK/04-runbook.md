@@ -17,6 +17,7 @@ related: 00-overview.md, 01-prd.md, 02-architecture.md, 03-nfr-security.md
 |---|---|---|---|
 | Local dev | local path (`SOLO_EMPIRE_DATA_LAKE_URI`) | loopback `127.0.0.1:8109` | ใช้งานได้ |
 | Local scheduled (Windows) | local path | — | ingest รายชั่วโมง |
+| Hosted scheduled (GitHub Actions) | R2 `portfolio-demo/book-job-data-001` | — | capture + ingest ทุก 6 ชม. จาก workflow `scheduled-capture` ใน career-job-scraper (ตั้งแต่ 2026-10-21) |
 | CI (GitHub Actions) | temp lake ใน test | — | ใช้งานได้ |
 | Hosted (Render Free) | R2 `s3://` prefix | `0.0.0.0`, token บังคับ | parallel service verified 2026-08-09 ที่ `6942dbf`; สถานะปัจจุบัน **[ต้องยืนยัน]** |
 | Compatibility mirror (parent) | — | Render service เดิมจากสำเนาใน parent | ยังเป็นตัวหลักจนกว่า cutover **[ต้องยืนยัน]** |
@@ -45,7 +46,15 @@ python -m book_job_data.ingest --input <path>/job_postings.csv --data-lake-uri <
 python -m book_job_data.ingest --input <path>/job_postings.csv --data-lake-uri <lake path> --project-csv
 ```
 
-Windows Task Scheduler (รายชั่วโมง, idempotent):
+Hosted (ทางหลักตั้งแต่ 2026-10-21): workflow `.github/workflows/scheduled-capture.yml` ใน
+career-job-scraper รัน capture ทุก 6 ชม. แล้วติดตั้ง book-job-data ตาม commit ที่ pin ไว้
+(`BOOK_JOB_DATA_REF`) และ ingest `job_postings.csv` กับ `matched_jobs.csv` เข้า R2
+`portfolio-demo/book-job-data-001` ซึ่งเป็น prefix ที่ Railway `book-job-data-api` อ่าน
+ใช้ R2 key แยกที่จำกัดเฉพาะ bucket `solo-empire-portfolio` (Infisical `/job-data`) และส่ง heartbeat
+`job-capture` ให้ uptime Worker (แจ้งเตือนเมื่อเงียบเกิน 13 ชม. หรือรันล้มเหลว)
+เมื่อแก้ ingest แล้วต้องการให้ hosted ใช้โค้ดใหม่ ให้ bump `BOOK_JOB_DATA_REF` ใน workflow นั้น
+
+Windows Task Scheduler (ทางเลือก local, รายชั่วโมง, idempotent):
 
 ```powershell
 .\ops\windows\scheduled-ingest.ps1 install
