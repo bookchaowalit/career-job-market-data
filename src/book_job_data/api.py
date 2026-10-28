@@ -44,10 +44,15 @@ class _DatasetCache:
                 self._entries[key] = (now, payload)
         return payload
 
-    def peek_status(self, dataset: str) -> str | None:
+    def peek(self, dataset: str, *, latest_only: bool = True) -> dict[str, Any] | None:
+        """Return whatever is cached (even past TTL) without touching the lake."""
         with self._lock:
-            hit = self._entries.get((dataset, True))
-        return hit[1].get("data_status") if hit else None
+            hit = self._entries.get((dataset, latest_only))
+        return hit[1] if hit else None
+
+    def peek_status(self, dataset: str) -> str | None:
+        hit = self.peek(dataset)
+        return hit.get("data_status") if hit else None
 
 
 class _RateLimiter:
@@ -220,15 +225,16 @@ class Handler(BaseHTTPRequestHandler):
                 ),
             )
         if path == "/v1/metadata":
-            datasets = {
-                name: CACHE.get(
-                    name,
-                    latest_only=name
-                    not in {config.DEFAULT_HISTORY_DATASET, "job_matches_history", "job_leads_history"},
-                )
-                for name in config.DATASETS.values()
-            }
-            record_payload = datasets[config.DEFAULT_DATASET]
+            # Full history scans take minutes on R2, so history counts come from the cache only
+            # (null until /v1/history has loaded that dataset).
+            dataset_counts: dict[str, int | None] = {}
+            for name in config.DATASETS.values():
+                if name.endswith("_history"):
+                    cached = CACHE.peek(name, latest_only=False)
+                    dataset_counts[name] = len(cached.get("items", [])) if cached else None
+                else:
+                    dataset_counts[name] = len(CACHE.get(name).get("items", []))
+            record_payload = CACHE.get(config.DEFAULT_DATASET)
             item = {
                 "repository": config.REPO_NAME,
                 "domain": config.DOMAIN,
@@ -236,7 +242,7 @@ class Handler(BaseHTTPRequestHandler):
                 "port": config.API_PORT,
                 "storage_model": _storage_model(record_payload.get("source_kind")),
                 "records_source_kind": record_payload.get("source_kind"),
-                "dataset_counts": {name: len(value.get("items", [])) for name, value in datasets.items()},
+                "dataset_counts": dataset_counts,
                 "lake_lineage": load_lineage(),
                 "scraper_boundary": "file_capture_only",
                 "api_bind": f"{config.API_HOST}:{config.API_PORT}",

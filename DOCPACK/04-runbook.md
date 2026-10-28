@@ -115,7 +115,7 @@ task data:job:readiness                                 # จาก solo-data-la
 .\ops\windows\scheduled-ingest.ps1 status               # LastTaskResult
 ```
 
-สัญญาณปกติ: `/v1/metadata` มี `dataset_counts` > 0, readiness ok, `LastTaskResult` = 0
+สัญญาณปกติ: `/v1/metadata` มี `dataset_counts` ของ dataset ล่าสุด > 0, readiness ok, `LastTaskResult` = 0 (ค่าของ `*_history` เป็น `null` จนกว่า `/v1/history` จะโหลด dataset นั้นเข้าแคช เพราะสแกนประวัติทั้งหมดบน R2 ใช้เวลาหลายนาที)
 
 ## 8. Failure handling / troubleshooting
 

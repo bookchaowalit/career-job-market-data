@@ -1,6 +1,9 @@
 """PII allowlist/redaction and API hardening (token guard, cache, rate limit)."""
 
+import json
+import threading
 import unittest
+import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
@@ -91,6 +94,42 @@ class ApiHardeningTests(unittest.TestCase):
         self.assertIs(first, second)
         self.assertEqual(first["items"], [{"title": "Dev"}])
         self.assertEqual(cache.peek_status("job_postings"), "ok")
+
+    def test_metadata_never_loads_full_history(self):
+        calls = []
+
+        def fake_load(dataset, *, latest_only=True):
+            calls.append((dataset, latest_only))
+            return {"data_status": "ok", "items": [{"title": "Dev"}], "source_kind": "bronze_s3"}
+
+        cache = api._DatasetCache(ttl_seconds=60)
+        server = api.Server(("127.0.0.1", 0), api.Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        url = f"http://127.0.0.1:{server.server_address[1]}/v1/metadata"
+        try:
+            with (
+                patch.object(api, "load_dataset", side_effect=fake_load),
+                patch.object(api, "CACHE", cache),
+                patch.object(api, "load_lineage", return_value=None),
+                patch.object(config, "API_READ_TOKEN", ""),
+            ):
+                with urllib.request.urlopen(url, timeout=10) as resp:
+                    cold = json.load(resp)["items"][0]["dataset_counts"]
+                cold_calls = list(calls)
+                cache.get("job_postings_history", latest_only=False)
+                with urllib.request.urlopen(url, timeout=10) as resp:
+                    warm = json.load(resp)["items"][0]["dataset_counts"]
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertEqual(
+            sorted(cold_calls), sorted((name, True) for name in ("job_postings", "job_matches", "job_leads"))
+        )
+        self.assertEqual(cold["job_postings"], 1)
+        self.assertIsNone(cold["job_postings_history"])
+        self.assertIsNone(cold["job_leads_history"])
+        self.assertEqual(warm["job_postings_history"], 1)
 
 
 if __name__ == "__main__":
