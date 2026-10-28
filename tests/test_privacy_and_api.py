@@ -2,6 +2,7 @@
 
 import json
 import threading
+import time
 import unittest
 import urllib.request
 from pathlib import Path
@@ -94,6 +95,40 @@ class ApiHardeningTests(unittest.TestCase):
         self.assertIs(first, second)
         self.assertEqual(first["items"], [{"title": "Dev"}])
         self.assertEqual(cache.peek_status("job_postings"), "ok")
+
+    def test_stale_entry_is_served_while_one_refresh_runs_in_background(self):
+        cache = api._DatasetCache(ttl_seconds=60)
+        release, done = threading.Event(), threading.Event()
+        new = {"data_status": "ok", "items": [{"title": "New"}]}
+
+        def slow_load(dataset, *, latest_only=True):
+            release.wait(5)
+            done.set()
+            return new
+
+        with patch.object(api, "load_dataset", return_value={"data_status": "ok", "items": [{"title": "Old"}]}):
+            cache.get("job_postings")
+        with patch.object(api.time, "monotonic", return_value=time.monotonic() + 120):
+            with patch.object(api, "load_dataset", side_effect=slow_load) as load:
+                stale = cache.get("job_postings")
+                again = cache.get("job_postings")
+                release.set()
+                self.assertTrue(done.wait(5))
+                for _ in range(50):
+                    if cache.peek("job_postings")["items"] == [{"title": "New"}]:
+                        break
+                    time.sleep(0.01)
+        self.assertEqual(stale["items"], [{"title": "Old"}])
+        self.assertEqual(again["items"], [{"title": "Old"}])
+        self.assertEqual(load.call_count, 1)
+        self.assertEqual(cache.peek("job_postings")["items"], [{"title": "New"}])
+
+    def test_warm_preloads_datasets_in_background(self):
+        cache = api._DatasetCache(ttl_seconds=60)
+        with patch.object(api, "load_dataset", return_value={"data_status": "ok", "items": []}) as load:
+            cache.warm(["job_postings", "job_leads"]).join(5)
+        self.assertEqual([c.args[0] for c in load.call_args_list], ["job_postings", "job_leads"])
+        self.assertEqual(cache.peek_status("job_leads"), "ok")
 
     def test_metadata_never_loads_full_history(self):
         calls = []

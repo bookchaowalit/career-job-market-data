@@ -23,26 +23,57 @@ _LOCAL_ORIGIN_RE = re.compile(r"^https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)
 
 
 class _DatasetCache:
-    """Reuse loaded Bronze datasets for a short TTL instead of scanning per request."""
+    """Reuse loaded Bronze datasets instead of scanning per request.
+
+    A dataset scan on R2 takes minutes, so past the TTL the cached copy is still
+    served while one background thread reloads it (stale-while-revalidate).
+    """
 
     def __init__(self, ttl_seconds: float):
         self.ttl = ttl_seconds
         self._lock = threading.Lock()
         self._entries: dict[tuple[str, bool], tuple[float, dict[str, Any]]] = {}
+        self._refreshing: set[tuple[str, bool]] = set()
 
-    def get(self, dataset: str, *, latest_only: bool = True) -> dict[str, Any]:
-        key = (dataset, latest_only)
-        now = time.monotonic()
-        with self._lock:
-            hit = self._entries.get(key)
-            if hit and now - hit[0] < self.ttl:
-                return hit[1]
+    def _load(self, dataset: str, latest_only: bool) -> dict[str, Any]:
+        started = time.monotonic()
         payload = load_dataset(dataset, latest_only=latest_only)
         payload = {**payload, "items": [sanitize_record(item) for item in payload.get("items", [])]}
         if self.ttl > 0:
             with self._lock:
-                self._entries[key] = (now, payload)
+                self._entries[(dataset, latest_only)] = (started, payload)
         return payload
+
+    def _refresh(self, key: tuple[str, bool]) -> None:
+        try:
+            self._load(*key)
+        except Exception as exc:  # keep serving the stale copy; report and retry on a later request
+            _sentry.capture(exc)
+        finally:
+            with self._lock:
+                self._refreshing.discard(key)
+
+    def get(self, dataset: str, *, latest_only: bool = True) -> dict[str, Any]:
+        key = (dataset, latest_only)
+        with self._lock:
+            hit = self._entries.get(key)
+            if hit and time.monotonic() - hit[0] >= self.ttl and key not in self._refreshing:
+                self._refreshing.add(key)
+                threading.Thread(target=self._refresh, args=(key,), daemon=True).start()
+        if hit:
+            return hit[1]
+        return self._load(dataset, latest_only)
+
+    def warm(self, datasets: list[str]) -> threading.Thread:
+        """Load the latest view of ``datasets`` in the background, one after another."""
+
+        def run() -> None:
+            for name in datasets:
+                self._refresh((name, True))
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        return thread
 
     def peek(self, dataset: str, *, latest_only: bool = True) -> dict[str, Any] | None:
         """Return whatever is cached (even past TTL) without touching the lake."""
@@ -313,6 +344,7 @@ class Server(ThreadingHTTPServer):
 def main() -> None:
     require_token_for_bind(config.API_HOST, config.API_READ_TOKEN)
     server = Server((config.API_HOST, config.API_PORT), Handler)
+    CACHE.warm([name for name in config.DATASETS.values() if not name.endswith("_history")])
     print(f"book-job-data API listening on http://{config.API_HOST}:{config.API_PORT}")
     try:
         server.serve_forever()
