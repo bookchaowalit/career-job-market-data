@@ -69,7 +69,7 @@ Windows Task Scheduler (ทางเลือก local, รายชั่วโ
 - Backfill: ส่ง capture CSV เก่าผ่าน `--input` (ซ้ำได้หลายไฟล์); ไฟล์ที่ bytes เดิมจะใช้ batch id เดิม
 - Replay: landing เก็บ exact bytes จึงสร้าง Bronze ใหม่ได้จาก landing; ใช้ฟังก์ชัน replay ของ `solo-empire-data-lake`
   **[ต้องยืนยัน]** ว่ามีคำสั่ง CLI สำหรับ replay ทั้ง lake หรือไม่
-- ไม่ควร backfill เข้า R2 production prefix โดยไม่ได้รับอนุมัติ; `scripts/r2_parity.py` เขียนได้เฉพาะ demo prefix ที่จำกัด
+- ไม่ควร backfill เข้า R2 production prefix โดยไม่ได้รับอนุมัติ; `scripts/r2_parity.py` เขียนได้เฉพาะ prefix ที่ชื่อมีคำว่า `parity` (เช่น `book-job-data-parity-001`) และปฏิเสธ `book-job-data-001` ที่เป็น production
 
 ## 5. Deploy (Render)
 
