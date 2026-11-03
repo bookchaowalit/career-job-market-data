@@ -136,8 +136,11 @@ Git, API metadata, or a manifest. The API reports
 
 ## Hosted R2 parity
 
-The operator-gated verifier writes only to a bounded demo prefix and never
-prints credentials:
+The operator-gated verifier writes fixture rows (provider `offline_fixture`) to a
+dedicated parity prefix and never prints credentials. It refuses any prefix
+whose last segment does not contain `parity`: `book-job-data-001` is the
+production Track B lake, and an earlier run there left two fixture rows in
+production Bronze (Silver excludes them).
 
 ```bash
 npx --yes @infisical/cli@0.43.120 run \
@@ -145,7 +148,7 @@ npx --yes @infisical/cli@0.43.120 run \
   bash -lc 'export DATA_LAKE_CLOUD_WRITE_ENABLED=true; \
     python scripts/r2_parity.py \
     --input fixtures/job_postings.csv \
-    --data-lake-uri s3://<bucket>/portfolio-demo/book-job-data-001'
+    --data-lake-uri s3://<bucket>/portfolio-demo/book-job-data-parity-001'
 ```
 
 Verified evidence: snapshot/history each contained 2 rows, snapshot raw bytes

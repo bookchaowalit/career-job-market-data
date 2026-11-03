@@ -13,12 +13,29 @@ from book_job_data import lake
 from book_job_data.ingest import ingest_capture
 
 
+def check_parity_prefix(data_lake_uri: str) -> None:
+    """Refuse any lake but a dedicated ``s3://…/<name-with-parity>`` prefix.
+
+    The verifier writes fixture rows (provider ``offline_fixture``). It once ran
+    against ``portfolio-demo/book-job-data-001``, which is the production Track B
+    lake, and two fixture rows reached production Bronze.
+    """
+    prefix = data_lake_uri.rstrip("/")
+    last = prefix.rsplit("/", 1)[-1] if prefix.startswith("s3://") and prefix.count("/") >= 3 else ""
+    if "parity" not in last:
+        raise SystemExit(
+            "Refusing: --data-lake-uri must be a dedicated parity prefix such as "
+            "s3://<bucket>/portfolio-demo/book-job-data-parity-001, never the production lake"
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, default=Path("fixtures/job_postings.csv"))
     parser.add_argument("--data-lake-uri", required=True)
     parser.add_argument("--provider", default="offline_fixture")
     args = parser.parse_args()
+    check_parity_prefix(args.data_lake_uri)
     if os.environ.get("DATA_LAKE_CLOUD_WRITE_ENABLED", "").lower() not in {"1", "true", "yes", "on"}:
         raise SystemExit("Refusing hosted replay: DATA_LAKE_CLOUD_WRITE_ENABLED=true is required")
 
