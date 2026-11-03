@@ -8,6 +8,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 from book_job_data import lake
 from book_job_data.ingest import ingest_capture
@@ -20,9 +21,12 @@ def check_parity_prefix(data_lake_uri: str) -> None:
     against ``portfolio-demo/book-job-data-001``, which is the production Track B
     lake, and two fixture rows reached production Bronze.
     """
-    prefix = data_lake_uri.rstrip("/")
-    last = prefix.rsplit("/", 1)[-1] if prefix.startswith("s3://") and prefix.count("/") >= 3 else ""
-    if "parity" not in last:
+    # Check what the storage layer will actually use: it parses the URI with
+    # urlparse(), which drops any query or fragment, so those are refused.
+    parsed = urlparse(data_lake_uri)
+    segments = [part for part in parsed.path.split("/") if part]
+    clean = parsed.scheme == "s3" and parsed.netloc and not (parsed.query or parsed.fragment or parsed.params)
+    if not clean or not segments or "parity" not in segments[-1]:
         raise SystemExit(
             "Refusing: --data-lake-uri must be a dedicated parity prefix such as "
             "s3://<bucket>/portfolio-demo/book-job-data-parity-001, never the production lake"

@@ -31,7 +31,17 @@ class R2ParityGuardTests(unittest.TestCase):
     def test_only_a_dedicated_parity_prefix_is_accepted(self):
         guard = _load().check_parity_prefix
         guard("s3://solo-empire-portfolio/portfolio-demo/book-job-data-parity-001")
-        for uri in ("s3://solo-empire-portfolio/portfolio-demo/anything", "/tmp/lake", "s3://bucket"):
+        for uri in (
+            "s3://solo-empire-portfolio/portfolio-demo/anything",
+            "/tmp/lake",
+            "s3://bucket",
+            "s3://parity-bucket",
+            # ObjectStore uses urlparse(): a query or fragment is dropped, so
+            # "parity" there must not let the production prefix through.
+            "s3://solo-empire-portfolio/portfolio-demo/book-job-data-001#parity",
+            "s3://solo-empire-portfolio/portfolio-demo/book-job-data-001?x=parity",
+            "s3://solo-empire-portfolio/portfolio-demo/book-job-data-parity-001?x=1",
+        ):
             with self.assertRaisesRegex(SystemExit, "parity"):
                 guard(uri)
 
