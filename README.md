@@ -199,8 +199,9 @@ AWS_SECRET_ACCESS_KEY=<R2 secret from secret manager>
 BOOK_JOB_DATA_API_TOKEN=<random read-only API token>
 LAKE_READ_MODE=parquet
 LAKE_READ_FALLBACK=error
-# Optional: the job_postings/job_matches/job_leads latest views read the newest jobs
-# Silver parts and fall back to Bronze (docs/specs/silver-job-postings-read.md).
+# Optional: the job_postings/job_matches/job_leads latest views and their _history
+# datasets read the newest jobs Silver parts and fall back to Bronze
+# (docs/specs/silver-job-postings-read.md).
 # "bronze" turns it off.
 BOOK_JOB_DATA_READ_LAYER=silver
 BOOK_JOB_DATA_SILVER_MAX_AGE_HOURS=6

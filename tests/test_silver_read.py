@@ -16,17 +16,20 @@ BRONZE_CSV = "title,company,url,source,scraped_at\nBronze Engineer,Example,https
 POINTER_PREFIX = "control/pointers/gold/source=book-job-data/domain=jobs/"
 SILVER_KEY = "silver/domain=jobs/dataset=job_postings/schema_version=2/event_date=2026-11-05/part-silver-abc.parquet"
 MATCHES_KEY = "silver/domain=jobs/dataset=job_matches/schema_version=1/event_date=mixed/part-silver-def.parquet"
+HISTORY_KEY = (
+    "silver/domain=jobs/dataset=job_postings_history/schema_version=1/event_date=mixed/part-silver-ab1.parquet"
+)
 MATCHES_CSV = "title,company,url,source,score,scraped_at\nBronze Match,Example,https://example.com/jobs/m,RemoteOK,7,2026-11-05T00:00:00Z\n"
 
 
-def _write_silver(lake: Path, titles: list[str], key: str = SILVER_KEY) -> None:
+def _write_silver(lake: Path, titles: list[str], key: str = SILVER_KEY, event_times: list[str] | None = None) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
     rows = [
         {
             "source_record_id": f"job-{i}",
-            "event_time": "2026-11-05T01:00:00Z",
+            "event_time": event_times[i] if event_times else "2026-11-05T01:00:00Z",
             "received_at": "2026-11-05T01:05:00Z",
             "payload_json": json.dumps({"id": f"job-{i}", "title": title, "url": f"https://example.com/jobs/{i}"}),
             "bronze_ingest_run_id": "2026-11-05-batch",
@@ -178,6 +181,39 @@ class SilverJobPostingsTests(unittest.TestCase):
         self.assertIn("job_leads is not in the pointer", leads["fallback_reason"])
         history = load_dataset(config.DATASETS["job_matches_history"], latest_only=False)
         self.assertEqual([item["title"] for item in history["items"]], ["Bronze Match"])
+        self.assertIn("job_matches_history is not in the pointer", history["fallback_reason"])
+
+    def test_history_comes_from_all_versions_silver_in_event_order(self):
+        _write_silver(
+            self.lake,
+            ["Second", "No time", "First"],
+            key=HISTORY_KEY,
+            event_times=["2026-11-05T02:00:00Z", "", "2026-11-05T01:00:00Z"],
+        )
+        datasets = {
+            "job_postings_history": {"silver_key": HISTORY_KEY, "silver_run_id": "silver-ab1", "record_count": 3}
+        }
+        _write_pointer(self.lake, self.now, datasets=datasets)
+        history = load_dataset(config.DEFAULT_HISTORY_DATASET, latest_only=False)
+        self.assertEqual(history["source_kind"], "silver_parquet")
+        self.assertEqual(history["silver_run_id"], "silver-ab1")
+        # Same order as the Bronze read: event_time, missing times last.
+        self.assertEqual([item["title"] for item in history["items"]], ["First", "Second", "No time"])
+        self.assertEqual([item["record_id"][-3:] for item in history["items"]], ["#h0", "#h1", "#h2"])
+        # A history dataset's latest view, and a latest dataset's history, stay on Bronze.
+        self.assertTrue(
+            load_dataset(config.DEFAULT_HISTORY_DATASET, latest_only=True)["source_kind"].startswith("bronze")
+        )
+
+    def test_a_history_entry_must_point_at_its_own_dataset(self):
+        _write_silver(self.lake, ["Silver One"])
+        datasets = {
+            "job_postings_history": {"silver_key": SILVER_KEY, "silver_run_id": "silver-abc", "record_count": 1}
+        }
+        _write_pointer(self.lake, self.now, datasets=datasets)
+        history = load_dataset(config.DEFAULT_HISTORY_DATASET, latest_only=False)
+        self.assertTrue(history["source_kind"].startswith("bronze"))
+        self.assertIn("not a job_postings_history Silver part", history["fallback_reason"])
 
     def test_a_dataset_entry_must_point_at_its_own_dataset(self):
         self._ingest_matches()
