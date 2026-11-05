@@ -32,9 +32,14 @@ DATA_LAKE_URI = os.environ.get("SOLO_EMPIRE_DATA_LAKE_URI", os.environ.get("DATA
 SOLO_DATA_LAKE_ROOT = os.environ.get("SOLO_DATA_LAKE_ROOT", "")
 LAKE_READ_MODE = os.environ.get("LAKE_READ_MODE", "parquet").strip().lower()
 LAKE_READ_FALLBACK = os.environ.get("LAKE_READ_FALLBACK", "error").strip().lower()
-# job_postings latest view: "silver" reads the newest jobs Silver part (Bronze fallback);
-# anything else keeps the full Bronze read. See docs/specs/silver-job-postings-read.md.
-JOB_POSTINGS_READ_LAYER = os.environ.get("BOOK_JOB_DATA_JOB_POSTINGS_LAYER", "silver").strip().lower()
+# Latest views of job_postings, job_matches and job_leads: "silver" reads the newest jobs
+# Silver part (Bronze fallback); anything else keeps the full Bronze read.
+# See docs/specs/silver-job-postings-read.md. The older variable name still works.
+SILVER_READ_LAYER = (
+    (os.environ.get("BOOK_JOB_DATA_READ_LAYER") or os.environ.get("BOOK_JOB_DATA_JOB_POSTINGS_LAYER") or "silver")
+    .strip()
+    .lower()
+)
 SILVER_MAX_AGE_HOURS = float(os.environ.get("BOOK_JOB_DATA_SILVER_MAX_AGE_HOURS", "6"))
 LINEAGE_FILE = "lake_lineage.json"
 BRONZE_SCHEMA_VERSION = "1"

@@ -13,8 +13,10 @@ from urllib.parse import urlsplit, urlunsplit
 from . import config, lake
 
 SILVER_POINTER_PREFIX = "control/pointers/gold/source=book-job-data/domain=jobs/"
+# Latest views served from Silver; each must name a part of its own dataset.
+SILVER_DATASETS = ("job_postings", "job_matches", "job_leads")
 SILVER_KEY_PATTERN = re.compile(
-    r"silver/domain=jobs/dataset=job_postings/schema_version=[A-Za-z0-9_-]+/"
+    r"silver/domain=jobs/dataset=(?P<dataset>job_postings|job_matches|job_leads)/schema_version=[A-Za-z0-9_-]+/"
     r"event_date=[A-Za-z0-9_-]+/part-silver-[0-9a-f]+\.parquet"
 )
 
@@ -107,8 +109,8 @@ class _SilverUnavailable(Exception):
     pass
 
 
-def _load_silver_job_postings(uri: str) -> dict[str, Any]:
-    """Newest jobs Silver part via its Gold pointer (data-lake-pipelines jobs-gold-pointer spec)."""
+def _load_silver(dataset: str, uri: str) -> dict[str, Any]:
+    """Newest jobs Silver part of ``dataset`` via its Gold pointer (data-lake-pipelines jobs-gold-pointer spec)."""
     product_store = _ps()  # puts a SOLO_DATA_LAKE_ROOT runtime on sys.path before the imports below
     from data_lake.query import query_parquet  # type: ignore
     from data_lake.storage import ObjectStore  # type: ignore
@@ -118,12 +120,22 @@ def _load_silver_job_postings(uri: str) -> dict[str, Any]:
     if not keys:
         raise _SilverUnavailable("no jobs Gold pointer")
     pointer = json.loads(store.get_bytes(max(keys)))
-    silver_key = str(pointer.get("silver_key") or "")
     if pointer.get("pointer_version") != "1" or pointer.get("layer") != "gold":
         raise _SilverUnavailable("unsupported pointer")
-    # Full match: no "..", globs or absolute paths reach the remote or local read.
-    if not SILVER_KEY_PATTERN.fullmatch(silver_key):
-        raise _SilverUnavailable("pointer silver_key is not a jobs Silver part")
+    entries = pointer.get("datasets")
+    if isinstance(entries, dict):
+        entry = entries.get(dataset)
+    elif dataset == "job_postings":  # pointers written before `datasets` existed
+        entry = {"silver_key": pointer.get("silver_key"), "silver_run_id": pointer.get("silver_run_id")}
+    else:
+        entry = None
+    if not isinstance(entry, dict):
+        raise _SilverUnavailable(f"{dataset} is not in the pointer")
+    silver_key = str(entry.get("silver_key") or "")
+    # Full match: no "..", globs, absolute paths or another dataset's part reach the read.
+    match = SILVER_KEY_PATTERN.fullmatch(silver_key)
+    if not match or match.group("dataset") != dataset:
+        raise _SilverUnavailable(f"pointer silver_key is not a {dataset} Silver part")
     published = datetime.fromisoformat(str(pointer.get("published_at") or "").replace("Z", "+00:00"))
     age_hours = (datetime.now(timezone.utc) - published).total_seconds() / 3600
     if age_hours > config.SILVER_MAX_AGE_HOURS:
@@ -150,7 +162,7 @@ def _load_silver_job_postings(uri: str) -> dict[str, Any]:
         "read_fallback": "bronze",
         "fallback_reason": None,
         "retrieved_at": utc_now_iso(),
-        "silver_run_id": pointer.get("silver_run_id"),
+        "silver_run_id": entry.get("silver_run_id"),
         "gold_run_id": pointer.get("gold_run_id"),
     }
 
@@ -165,9 +177,9 @@ def load_dataset(dataset: str, *, data_lake_uri: Optional[str] = None, latest_on
         }
     uri = data_lake_uri or lake.default_data_lake_uri()
     silver_reason = None
-    if dataset == config.DEFAULT_DATASET and latest_only and config.JOB_POSTINGS_READ_LAYER == "silver":
+    if dataset in SILVER_DATASETS and latest_only and config.SILVER_READ_LAYER == "silver":
         try:
-            return _load_silver_job_postings(uri)
+            return _load_silver(dataset, uri)
         except Exception as exc:  # noqa: BLE001 - any Silver failure must fall back to Bronze
             silver_reason = f"silver: {type(exc).__name__}: {exc}"
     payload = _load_bronze(dataset, uri, latest_only=latest_only)

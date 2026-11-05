@@ -15,9 +15,11 @@ from book_job_data.store import load_dataset, load_records
 BRONZE_CSV = "title,company,url,source,scraped_at\nBronze Engineer,Example,https://example.com/jobs/a,RemoteOK,2026-11-05T00:00:00Z\n"
 POINTER_PREFIX = "control/pointers/gold/source=book-job-data/domain=jobs/"
 SILVER_KEY = "silver/domain=jobs/dataset=job_postings/schema_version=2/event_date=2026-11-05/part-silver-abc.parquet"
+MATCHES_KEY = "silver/domain=jobs/dataset=job_matches/schema_version=1/event_date=mixed/part-silver-def.parquet"
+MATCHES_CSV = "title,company,url,source,score,scraped_at\nBronze Match,Example,https://example.com/jobs/m,RemoteOK,7,2026-11-05T00:00:00Z\n"
 
 
-def _write_silver(lake: Path, titles: list[str]) -> None:
+def _write_silver(lake: Path, titles: list[str], key: str = SILVER_KEY) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
@@ -33,7 +35,7 @@ def _write_silver(lake: Path, titles: list[str]) -> None:
         }
         for i, title in enumerate(titles)
     ]
-    path = lake / SILVER_KEY
+    path = lake / key
     path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(pa.Table.from_pylist(rows), path)
 
@@ -74,7 +76,7 @@ class SilverJobPostingsTests(unittest.TestCase):
         self.now = datetime.now(timezone.utc)
         for patch in (
             mock.patch.object(config, "DATA_LAKE_URI", str(self.lake)),
-            mock.patch.object(config, "JOB_POSTINGS_READ_LAYER", "silver"),
+            mock.patch.object(config, "SILVER_READ_LAYER", "silver"),
             mock.patch.object(config, "SILVER_MAX_AGE_HOURS", 6.0),
         ):
             patch.start()
@@ -136,7 +138,7 @@ class SilverJobPostingsTests(unittest.TestCase):
     def test_bronze_layer_setting_skips_silver(self):
         _write_silver(self.lake, ["Silver One"])
         _write_pointer(self.lake, self.now)
-        with mock.patch.object(config, "JOB_POSTINGS_READ_LAYER", "bronze"):
+        with mock.patch.object(config, "SILVER_READ_LAYER", "bronze"):
             loaded = load_records()
         self.assertEqual(loaded["source_kind"], "bronze_parquet")
         self.assertIsNone(loaded["fallback_reason"])
@@ -147,8 +149,44 @@ class SilverJobPostingsTests(unittest.TestCase):
         history = load_dataset(config.DEFAULT_DATASET, latest_only=False)
         self.assertEqual(history["source_kind"], "bronze_parquet")
         self.assertEqual([item["title"] for item in history["items"]], ["Bronze Engineer"])
+        # An older pointer without `datasets` only covers job_postings.
         other = load_dataset(config.DATASETS["job_matches"], latest_only=True)
         self.assertTrue(other["source_kind"].startswith("bronze"))
+
+    def _ingest_matches(self):
+        source = Path(self._tmp.name) / "matched_jobs.csv"
+        source.write_text(MATCHES_CSV, encoding="utf-8")
+        with mock.patch.object(config, "DATA_DIR", Path(self._tmp.name) / "projection"):
+            ingest_capture(source, data_lake_uri=str(self.lake), provider="fixture")
+
+    def test_matches_come_from_the_pointer_datasets_map_and_leads_fall_back(self):
+        self._ingest_matches()
+        _write_silver(self.lake, ["Silver One"])
+        _write_silver(self.lake, ["Silver Match", "Silver Match 2"], key=MATCHES_KEY)
+        datasets = {
+            "job_postings": {"silver_key": SILVER_KEY, "silver_run_id": "silver-abc", "record_count": 1},
+            "job_matches": {"silver_key": MATCHES_KEY, "silver_run_id": "silver-def", "record_count": 2},
+        }
+        _write_pointer(self.lake, self.now, datasets=datasets)
+        matches = load_dataset(config.DATASETS["job_matches"], latest_only=True)
+        self.assertEqual(matches["source_kind"], "silver_parquet")
+        self.assertEqual(matches["silver_run_id"], "silver-def")
+        self.assertEqual(sorted(item["title"] for item in matches["items"]), ["Silver Match", "Silver Match 2"])
+        self.assertEqual(load_records()["source_kind"], "silver_parquet")
+        leads = load_dataset(config.DATASETS["job_leads"], latest_only=True)
+        self.assertTrue(leads["source_kind"].startswith("bronze"))
+        self.assertIn("job_leads is not in the pointer", leads["fallback_reason"])
+        history = load_dataset(config.DATASETS["job_matches_history"], latest_only=False)
+        self.assertEqual([item["title"] for item in history["items"]], ["Bronze Match"])
+
+    def test_a_dataset_entry_must_point_at_its_own_dataset(self):
+        self._ingest_matches()
+        _write_silver(self.lake, ["Silver One"])
+        datasets = {"job_matches": {"silver_key": SILVER_KEY, "silver_run_id": "silver-abc", "record_count": 1}}
+        _write_pointer(self.lake, self.now, datasets=datasets)
+        matches = load_dataset(config.DATASETS["job_matches"], latest_only=True)
+        self.assertTrue(matches["source_kind"].startswith("bronze"))
+        self.assertEqual([item["title"] for item in matches["items"]], ["Bronze Match"])
 
     def test_metadata_storage_model_names_silver(self):
         from book_job_data.api import _storage_model
