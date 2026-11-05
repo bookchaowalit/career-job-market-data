@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import hashlib
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlsplit, urlunsplit
 
 from . import config, lake
+
+SILVER_POINTER_PREFIX = "control/pointers/gold/source=book-job-data/domain=jobs/"
 
 
 def _product_store():
@@ -94,6 +98,56 @@ def _contract():
     )
 
 
+class _SilverUnavailable(Exception):
+    pass
+
+
+def _load_silver_job_postings(uri: str) -> dict[str, Any]:
+    """Newest jobs Silver part via its Gold pointer (data-lake-pipelines jobs-gold-pointer spec)."""
+    from data_lake.query import query_parquet  # type: ignore
+    from data_lake.storage import ObjectStore  # type: ignore
+
+    store = ObjectStore(uri)
+    keys = [key for key in store.list_keys(SILVER_POINTER_PREFIX) if key.endswith(".json")]
+    if not keys:
+        raise _SilverUnavailable("no jobs Gold pointer")
+    pointer = json.loads(store.get_bytes(max(keys)))
+    silver_key = str(pointer.get("silver_key") or "")
+    if pointer.get("pointer_version") != "1" or pointer.get("layer") != "gold":
+        raise _SilverUnavailable("unsupported pointer")
+    if not silver_key.startswith("silver/domain=jobs/"):
+        raise _SilverUnavailable("pointer silver_key is not a jobs Silver part")
+    published = datetime.fromisoformat(str(pointer.get("published_at") or "").replace("Z", "+00:00"))
+    age_hours = (datetime.now(timezone.utc) - published).total_seconds() / 3600
+    if age_hours > config.SILVER_MAX_AGE_HOURS:
+        raise _SilverUnavailable(f"pointer is {age_hours:.1f} h old, older than {config.SILVER_MAX_AGE_HOURS:g} h")
+    remote = uri.lower().startswith("s3://")
+    path = f"{uri.rstrip('/')}/{silver_key}" if remote else str(lake._pa().resolve_lake_root(uri) / silver_key)
+    rows = query_parquet(
+        path,
+        "SELECT source_record_id, event_time, received_at, payload_json, "
+        "bronze_ingest_run_id AS ingest_run_id, raw_object_key "
+        "FROM lake_table ORDER BY source_record_id",
+    )
+    if not rows:
+        raise _SilverUnavailable("Silver part has no rows")
+    items = [_item_from_bronze(row) for row in rows]
+    status, _ = _ps().freshness(items, stale_after_hours=config.STALE_AFTER_HOURS)
+    return {
+        "items": items,
+        "data_status": status,
+        "error": None,
+        "path": path,
+        "source_kind": "silver_s3_parquet" if remote else "silver_parquet",
+        "read_mode": "parquet",
+        "read_fallback": "bronze",
+        "fallback_reason": None,
+        "retrieved_at": utc_now_iso(),
+        "silver_run_id": pointer.get("silver_run_id"),
+        "gold_run_id": pointer.get("gold_run_id"),
+    }
+
+
 def load_dataset(dataset: str, *, data_lake_uri: Optional[str] = None, latest_only: bool = True) -> dict[str, Any]:
     if dataset not in config.DATASETS.values():
         return {
@@ -102,10 +156,24 @@ def load_dataset(dataset: str, *, data_lake_uri: Optional[str] = None, latest_on
             "error": f"unknown dataset: {dataset}",
             "source_kind": "bronze_parquet",
         }
+    uri = data_lake_uri or lake.default_data_lake_uri()
+    silver_reason = None
+    if dataset == config.DEFAULT_DATASET and latest_only and config.JOB_POSTINGS_READ_LAYER == "silver":
+        try:
+            return _load_silver_job_postings(uri)
+        except Exception as exc:  # noqa: BLE001 - any Silver failure must fall back to Bronze
+            silver_reason = f"silver: {type(exc).__name__}: {exc}"
+    payload = _load_bronze(dataset, uri, latest_only=latest_only)
+    if silver_reason:
+        payload["fallback_reason"] = silver_reason
+    return payload
+
+
+def _load_bronze(dataset: str, uri: str, *, latest_only: bool) -> dict[str, Any]:
     return _ps().load_bronze_dataset(
         _contract(),
         dataset,
-        data_lake_uri=data_lake_uri or lake.default_data_lake_uri(),
+        data_lake_uri=uri,
         latest_only=latest_only,
         id_fields=["url", "source_url", "link"],
         id_sep=":",

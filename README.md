@@ -199,6 +199,10 @@ AWS_SECRET_ACCESS_KEY=<R2 secret from secret manager>
 BOOK_JOB_DATA_API_TOKEN=<random read-only API token>
 LAKE_READ_MODE=parquet
 LAKE_READ_FALLBACK=error
+# Optional: job_postings latest view reads the newest jobs Silver part and falls
+# back to Bronze (docs/specs/silver-job-postings-read.md). "bronze" turns it off.
+BOOK_JOB_DATA_JOB_POSTINGS_LAYER=silver
+BOOK_JOB_DATA_SILVER_MAX_AGE_HOURS=6
 ```
 
 After deployment, verify the hosted path without enabling the lake fallback:
@@ -212,8 +216,8 @@ PYTHONPATH=/path/to/solo-data-lake/infra/scripts \
 ```
 
 Expected output has `status=verified`,
-`storage_model=lake_first_job_bronze_s3_duckdb`, and
-`records_source_kind=bronze_s3_parquet`. The free service is a portfolio/demo
+`storage_model=lake_first_job_silver_s3_duckdb` (or `..._bronze_s3_duckdb` on fallback), and
+`records_source_kind=silver_s3_parquet` (or `bronze_s3_parquet`). The free service is a portfolio/demo
 lane: it may sleep after inactivity and its filesystem is ephemeral, so R2 is
 the only durable data source.
 
