@@ -112,7 +112,18 @@ class SilverJobPostingsTests(unittest.TestCase):
         self.assertIn("older than", loaded["fallback_reason"])
 
     def test_invalid_pointer_or_unreadable_part_falls_back_to_bronze(self):
-        for overrides in ({"pointer_version": "2"}, {"silver_key": "bronze/domain=jobs/x.parquet"}, {"silver_key": "silver/domain=jobs/missing.parquet"}):
+        for overrides in (
+            {"pointer_version": "2"},
+            {"silver_key": "bronze/domain=jobs/x.parquet"},
+            {"silver_key": "silver/domain=jobs/missing.parquet"},
+            {
+                "silver_key": "silver/domain=jobs/dataset=job_postings/schema_version=2/event_date=2026-11-04/part-silver-def.parquet"
+            },
+            {"silver_key": "silver/domain=jobs/../../control/secret.parquet"},
+            {
+                "silver_key": "silver/domain=jobs/dataset=job_postings/schema_version=2/event_date=*/part-silver-abc.parquet"
+            },
+        ):
             with self.subTest(overrides=overrides):
                 for old in (self.lake / POINTER_PREFIX).glob("*.json"):
                     old.unlink()

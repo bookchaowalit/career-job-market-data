@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -12,6 +13,10 @@ from urllib.parse import urlsplit, urlunsplit
 from . import config, lake
 
 SILVER_POINTER_PREFIX = "control/pointers/gold/source=book-job-data/domain=jobs/"
+SILVER_KEY_PATTERN = re.compile(
+    r"silver/domain=jobs/dataset=job_postings/schema_version=[A-Za-z0-9_-]+/"
+    r"event_date=[A-Za-z0-9_-]+/part-silver-[0-9a-f]+\.parquet"
+)
 
 
 def _product_store():
@@ -104,6 +109,7 @@ class _SilverUnavailable(Exception):
 
 def _load_silver_job_postings(uri: str) -> dict[str, Any]:
     """Newest jobs Silver part via its Gold pointer (data-lake-pipelines jobs-gold-pointer spec)."""
+    product_store = _ps()  # puts a SOLO_DATA_LAKE_ROOT runtime on sys.path before the imports below
     from data_lake.query import query_parquet  # type: ignore
     from data_lake.storage import ObjectStore  # type: ignore
 
@@ -115,7 +121,8 @@ def _load_silver_job_postings(uri: str) -> dict[str, Any]:
     silver_key = str(pointer.get("silver_key") or "")
     if pointer.get("pointer_version") != "1" or pointer.get("layer") != "gold":
         raise _SilverUnavailable("unsupported pointer")
-    if not silver_key.startswith("silver/domain=jobs/"):
+    # Full match: no "..", globs or absolute paths reach the remote or local read.
+    if not SILVER_KEY_PATTERN.fullmatch(silver_key):
         raise _SilverUnavailable("pointer silver_key is not a jobs Silver part")
     published = datetime.fromisoformat(str(pointer.get("published_at") or "").replace("Z", "+00:00"))
     age_hours = (datetime.now(timezone.utc) - published).total_seconds() / 3600
@@ -132,7 +139,7 @@ def _load_silver_job_postings(uri: str) -> dict[str, Any]:
     if not rows:
         raise _SilverUnavailable("Silver part has no rows")
     items = [_item_from_bronze(row) for row in rows]
-    status, _ = _ps().freshness(items, stale_after_hours=config.STALE_AFTER_HOURS)
+    status, _ = product_store.freshness(items, stale_after_hours=config.STALE_AFTER_HOURS)
     return {
         "items": items,
         "data_status": status,
