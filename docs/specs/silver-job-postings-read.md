@@ -14,8 +14,10 @@ in one Parquet file.
 ## Behaviour
 
 1. The latest views (`latest_only=True`) of `job_postings`, `job_matches` and `job_leads` read
-   Silver (`job_matches`/`job_leads` since 2026-11-05, envelope Silver). The three `_history`
-   datasets keep the Bronze read.
+   Silver (`job_matches`/`job_leads` since 2026-11-05, envelope Silver). Since 2026-11-05 the
+   three `_history` datasets (`latest_only=False`) also read Silver: the all-versions envelope
+   part listed under their own name in `datasets`. A `_history` dataset's latest view, or a
+   latest dataset's history, keeps the Bronze read.
 2. With `BOOK_JOB_DATA_READ_LAYER=silver` (the default) the store lists
    `control/pointers/gold/source=book-job-data/domain=jobs/`, takes the greatest `.json` key,
    and requires `pointer_version == "1"` and `layer == "gold"`. The part is
@@ -39,6 +41,11 @@ in one Parquet file.
    `lake_first_job_silver_duckdb` for Silver loads.
 
 ## Known differences from the Bronze view
+
+History items keep the Bronze read's order (`event_time`, then `received_at`, missing times last)
+and are numbered `#h<n>` the same way; rows tied on both times are ordered by `source_record_id`
+instead of Bronze's `event_id`, so tied rows can swap numbers. History Silver drops
+`offline_fixture` and quarantined rows like the other envelope parts.
 
 `job_postings` Silver drops quarantined rows (at most 2 % per run, else no Gold is published) and excluded test
 providers (`offline_fixture`), and it lags Bronze by up to ~2.5 h (capture `:17` every 6 h, marts

@@ -13,10 +13,19 @@ from urllib.parse import urlsplit, urlunsplit
 from . import config, lake
 
 SILVER_POINTER_PREFIX = "control/pointers/gold/source=book-job-data/domain=jobs/"
-# Latest views served from Silver; each must name a part of its own dataset.
-SILVER_DATASETS = ("job_postings", "job_matches", "job_leads")
+# Served from Silver (latest views, and the `_history` datasets' full history);
+# each must name a part of its own dataset.
+SILVER_DATASETS = (
+    "job_postings",
+    "job_matches",
+    "job_leads",
+    "job_postings_history",
+    "job_matches_history",
+    "job_leads_history",
+)
 SILVER_KEY_PATTERN = re.compile(
-    r"silver/domain=jobs/dataset=(?P<dataset>job_postings|job_matches|job_leads)/schema_version=[A-Za-z0-9_-]+/"
+    r"silver/domain=jobs/dataset=(?P<dataset>(?:job_postings|job_matches|job_leads)(?:_history)?)/"
+    r"schema_version=[A-Za-z0-9_-]+/"
     r"event_date=[A-Za-z0-9_-]+/part-silver-[0-9a-f]+\.parquet"
 )
 
@@ -142,15 +151,22 @@ def _load_silver(dataset: str, uri: str) -> dict[str, Any]:
         raise _SilverUnavailable(f"pointer is {age_hours:.1f} h old, older than {config.SILVER_MAX_AGE_HOURS:g} h")
     remote = uri.lower().startswith("s3://")
     path = f"{uri.rstrip('/')}/{silver_key}" if remote else str(lake._pa().resolve_lake_root(uri) / silver_key)
+    history = dataset.endswith("_history")
+    # History items are numbered by position, so keep the Bronze read's order
+    # (Silver stores a missing time as "", which must still sort last).
+    order = (
+        "NULLIF(event_time, '') NULLS LAST, NULLIF(received_at, '') NULLS LAST, source_record_id, payload_json"
+        if history
+        else "source_record_id"
+    )
     rows = query_parquet(
         path,
         "SELECT source_record_id, event_time, received_at, payload_json, "
-        "bronze_ingest_run_id AS ingest_run_id, raw_object_key "
-        "FROM lake_table ORDER BY source_record_id",
+        f"bronze_ingest_run_id AS ingest_run_id, raw_object_key FROM lake_table ORDER BY {order}",
     )
     if not rows:
         raise _SilverUnavailable("Silver part has no rows")
-    items = [_item_from_bronze(row) for row in rows]
+    items = [_item_from_bronze(row, history=history, history_idx=idx) for idx, row in enumerate(rows)]
     status, _ = product_store.freshness(items, stale_after_hours=config.STALE_AFTER_HOURS)
     return {
         "items": items,
@@ -177,7 +193,10 @@ def load_dataset(dataset: str, *, data_lake_uri: Optional[str] = None, latest_on
         }
     uri = data_lake_uri or lake.default_data_lake_uri()
     silver_reason = None
-    if dataset in SILVER_DATASETS and latest_only and config.SILVER_READ_LAYER == "silver":
+    # A `_history` dataset is served whole and the others as latest views; any
+    # other pairing keeps the Bronze read.
+    silver_view = dataset.endswith("_history") != latest_only
+    if dataset in SILVER_DATASETS and silver_view and config.SILVER_READ_LAYER == "silver":
         try:
             return _load_silver(dataset, uri)
         except Exception as exc:  # noqa: BLE001 - any Silver failure must fall back to Bronze
