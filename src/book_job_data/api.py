@@ -172,6 +172,10 @@ def _storage_model(source_kind: Any) -> str:
     kind = str(source_kind or "")
     if kind.startswith("iceberg_"):
         return "lake_first_job_iceberg_rest_duckdb"
+    if kind.startswith("silver_s3_parquet"):
+        return "lake_first_job_silver_s3_duckdb"
+    if kind.startswith("silver_parquet"):
+        return "lake_first_job_silver_duckdb"
     if kind.startswith("bronze_s3_parquet"):
         return "lake_first_job_bronze_s3_duckdb"
     return "lake_first_job_bronze_duckdb"
